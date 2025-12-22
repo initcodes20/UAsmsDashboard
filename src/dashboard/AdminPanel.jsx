@@ -1,0 +1,713 @@
+﻿import React, { useEffect, useState } from "react";
+import { collection, onSnapshot, updateDoc, doc, query, where, orderBy } from "firebase/firestore";
+import { db } from "../firebase";
+
+const AdminPanel = ({ onLogout }) => {
+  const [users, setUsers] = useState([]);
+  const [featureRequests, setFeatureRequests] = useState([]);
+  const [filter, setFilter] = useState("pending"); // pending | approved | rejected
+  const [search, setSearch] = useState("");
+  const [dateSort, setDateSort] = useState("desc"); // desc | asc
+  const [showRequests, setShowRequests] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem("darkMode");
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  // Toggle dark mode
+  const toggleDarkMode = () => {
+    const newMode = !darkMode;
+    setDarkMode(newMode);
+    localStorage.setItem("darkMode", JSON.stringify(newMode));
+  };
+
+  // 🔹 Firestore real-time listener for users
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
+      const allUsers = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setUsers(allUsers);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 🔹 Firestore real-time listener for feature requests
+  useEffect(() => {
+    const q = query(
+      collection(db, "feature_requests"),
+      orderBy("requestedAt", "desc")
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const requests = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setFeatureRequests(requests);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 🔹 Approve user
+  const handleApprove = async (id) => {
+    await updateDoc(doc(db, "users", id), {
+      isApproved: true,
+      isActive: true,
+      isDeactivated: false,
+      expiresAt: new Date(
+        new Date().setFullYear(new Date().getFullYear() + 1)
+      ),
+    });
+  };
+
+  // 🔹 Reject user
+  const handleReject = async (id) => {
+    await updateDoc(doc(db, "users", id), {
+      isApproved: false,
+      isDeactivated: true,
+      isActive: false,
+    });
+  };
+
+  // 🔹 Deactivate user
+  const handleDeactivate = async (id) => {
+    await updateDoc(doc(db, "users", id), {
+      isActive: false,
+      isDeactivated: true,
+    });
+  };
+
+  // 🔹 Activate user
+  const handleActivate = async (id) => {
+    await updateDoc(doc(db, "users", id), {
+      isActive: true,
+      isDeactivated: false,
+      isApproved: true,
+      expiresAt: new Date(
+        new Date().setFullYear(new Date().getFullYear() + 1)
+      ),
+    });
+  };
+
+  // 🔹 Toggle WhatsApp feature
+  const handleToggleWhatsApp = async (id, currentStatus) => {
+    try {
+      await updateDoc(doc(db, "users", id), {
+        whatsappEnabled: !currentStatus,
+      });
+    } catch (error) {
+      console.error("Error toggling WhatsApp:", error);
+    }
+  };
+
+  // 🔹 Approve WhatsApp feature request
+  const handleApproveRequest = async (requestId, userId) => {
+    try {
+      // Enable WhatsApp for the user
+      await updateDoc(doc(db, "users", userId), {
+        whatsappEnabled: true,
+      });
+
+      // Update request status
+      await updateDoc(doc(db, "feature_requests", requestId), {
+        status: "approved",
+        approvedAt: new Date(),
+      });
+    } catch (error) {
+      console.error("Error approving request:", error);
+    }
+  };
+
+  // 🔹 Reject WhatsApp feature request
+  const handleRejectRequest = async (requestId) => {
+    try {
+      await updateDoc(doc(db, "feature_requests", requestId), {
+        status: "rejected",
+        rejectedAt: new Date(),
+      });
+    } catch (error) {
+      console.error("Error rejecting request:", error);
+    }
+  };
+
+  // 🔹 Filter by status
+  const filteredUsers = users.filter((u) => {
+    if (filter === "pending") return !u.isApproved && !u.isDeactivated;
+    if (filter === "approved") return u.isApproved && !u.isDeactivated;
+    if (filter === "rejected") return u.isDeactivated;
+    return true;
+  });
+
+  // 🔹 Search by phone OR agentCode (case-insensitive)
+  const searchedUsers = filteredUsers.filter((u) => {
+    const phone = (u.phone || "").toLowerCase();
+    const agentCode = (u.agentCode || "").toLowerCase();
+    const query = search.toLowerCase();
+    return phone.includes(query) || agentCode.includes(query);
+  });
+
+  // 🔹 Sort Users
+  const sortedUsers = [...searchedUsers].sort((a, b) => {
+    const dateA = a.createdAt?.seconds || 0;
+    const dateB = b.createdAt?.seconds || 0;
+    return dateSort === "asc" ? dateA - dateB : dateB - dateA;
+  });
+
+  // 🔹 Calculate stats
+  const stats = {
+    total: users.length,
+    pending: users.filter((u) => !u.isApproved && !u.isDeactivated).length,
+    approved: users.filter((u) => u.isApproved && !u.isDeactivated).length,
+    rejected: users.filter((u) => u.isDeactivated).length,
+    active: users.filter((u) => u.isActive).length,
+  };
+
+  // 🔹 Feature requests stats
+  const pendingRequests = featureRequests.filter((r) => r.status === "pending").length;
+
+  return (
+    <div className={`min-h-screen transition-colors duration-300 ${darkMode
+      ? "bg-gradient-to-br from-gray-900 to-gray-800"
+      : "bg-gradient-to-br from-gray-50 to-gray-100"
+      }`}>
+      {/* Header Section */}
+      <div className={`shadow-sm border-b transition-colors duration-300 ${darkMode
+        ? "bg-gray-800 border-gray-700"
+        : "bg-white border-gray-200"
+        }`}>
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 md:py-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h1 className={`text-2xl md:text-3xl lg:text-4xl font-bold transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                }`}>
+                UAsms Admin Panel
+              </h1>
+              <p className={`text-xs md:text-sm mt-1 transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                }`}>
+                Manage user registrations and access control
+              </p>
+            </div>
+            <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+              {/* Feature Requests Button */}
+              <button
+                onClick={() => setShowRequests(!showRequests)}
+                className={`relative flex items-center gap-2 px-3 md:px-4 py-2 rounded-lg font-semibold text-xs md:text-sm transition-all duration-300 shadow-md hover:shadow-lg ${showRequests
+                  ? "bg-green-500 hover:bg-green-600 text-white"
+                  : darkMode
+                    ? "bg-gray-700 hover:bg-gray-600 text-white"
+                    : "bg-white hover:bg-gray-50 text-gray-900 border border-gray-300"
+                  }`}
+              >
+                <span className="text-lg md:text-xl">📧</span>
+                <span className="hidden sm:inline">Requests</span>
+                {pendingRequests > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                    {pendingRequests}
+                  </span>
+                )}
+              </button>
+
+              {/* Dark Mode Toggle */}
+              <button
+                onClick={toggleDarkMode}
+                className={`flex items-center gap-2 px-3 md:px-4 py-2 rounded-lg font-semibold text-xs md:text-sm transition-all duration-300 shadow-md hover:shadow-lg ${darkMode
+                  ? "bg-yellow-500 hover:bg-yellow-600 text-gray-900"
+                  : "bg-gray-800 hover:bg-gray-900 text-white"
+                  }`}
+              >
+                <span className="text-lg md:text-xl">{darkMode ? "☀️" : "🌙"}</span>
+                <span className="hidden sm:inline">{darkMode ? "Light" : "Dark"}</span>
+              </button>
+
+              {/* Logout Button */}
+              <button
+                onClick={onLogout}
+                className="bg-red-500 hover:bg-red-600 text-white px-3 md:px-4 py-2 rounded-lg font-semibold text-xs md:text-sm transition-all duration-300 shadow-md hover:shadow-lg"
+              >
+                <span className="hidden sm:inline">Logout</span>
+                <span className="sm:hidden">🚪</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">{/* Stats Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4 mb-6 md:mb-8">
+          <div className={`rounded-xl shadow-md p-4 md:p-5 border hover:shadow-lg transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-xs font-medium uppercase transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>Total Users</p>
+                <p className={`text-xl md:text-2xl font-bold mt-1 transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                  }`}>{stats.total}</p>
+              </div>
+              <div className={`p-2 md:p-3 rounded-lg transition-colors duration-300 ${darkMode ? "bg-blue-900/50" : "bg-blue-100"
+                }`}>
+                <span className="text-xl md:text-2xl">👥</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl shadow-md p-4 md:p-5 border hover:shadow-lg transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-xs font-medium uppercase transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>Pending</p>
+                <p className="text-xl md:text-2xl font-bold text-yellow-600 mt-1">{stats.pending}</p>
+              </div>
+              <div className={`p-2 md:p-3 rounded-lg transition-colors duration-300 ${darkMode ? "bg-yellow-900/50" : "bg-yellow-100"
+                }`}>
+                <span className="text-xl md:text-2xl">⏳</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl shadow-md p-4 md:p-5 border hover:shadow-lg transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-xs font-medium uppercase transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>Approved</p>
+                <p className="text-xl md:text-2xl font-bold text-green-600 mt-1">{stats.approved}</p>
+              </div>
+              <div className={`p-2 md:p-3 rounded-lg transition-colors duration-300 ${darkMode ? "bg-green-900/50" : "bg-green-100"
+                }`}>
+                <span className="text-xl md:text-2xl">✅</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl shadow-md p-4 md:p-5 border hover:shadow-lg transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-xs font-medium uppercase transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>Active</p>
+                <p className="text-xl md:text-2xl font-bold text-blue-600 mt-1">{stats.active}</p>
+              </div>
+              <div className={`p-2 md:p-3 rounded-lg transition-colors duration-300 ${darkMode ? "bg-blue-900/50" : "bg-blue-100"
+                }`}>
+                <span className="text-xl md:text-2xl">🟢</span>
+              </div>
+            </div>
+          </div>
+
+          <div className={`rounded-xl shadow-md p-4 md:p-5 border hover:shadow-lg transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className={`text-xs font-medium uppercase transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>Rejected</p>
+                <p className="text-xl md:text-2xl font-bold text-red-600 mt-1">{stats.rejected}</p>
+              </div>
+              <div className={`p-2 md:p-3 rounded-lg transition-colors duration-300 ${darkMode ? "bg-red-900/50" : "bg-red-100"
+                }`}>
+                <span className="text-xl md:text-2xl">❌</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Feature Requests Section */}
+        {showRequests && (
+          <div className={`rounded-xl shadow-md p-4 md:p-6 mb-6 border transition-all duration-300 ${darkMode
+            ? "bg-gray-800 border-gray-700"
+            : "bg-white border-gray-100"
+            }`}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-lg md:text-xl font-bold transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                }`}>
+                💬 WhatsApp Feature Requests
+              </h2>
+              <button
+                onClick={() => setShowRequests(false)}
+                className={`px-3 py-1 rounded-lg text-sm font-semibold transition-all duration-200 ${darkMode
+                  ? "bg-gray-700 hover:bg-gray-600 text-gray-300"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  }`}
+              >
+                Close
+              </button>
+            </div>
+
+            {featureRequests.length === 0 ? (
+              <div className="text-center py-8">
+                <span className="text-4xl mb-2 block">📭</span>
+                <p className={`text-sm transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                  }`}>
+                  No feature requests yet
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {featureRequests.map((request) => {
+                  const user = users.find((u) => u.id === request.userId);
+                  return (
+                    <div
+                      key={request.id}
+                      className={`p-4 rounded-lg border transition-all duration-200 ${request.status === "pending"
+                        ? darkMode
+                          ? "bg-yellow-900/20 border-yellow-700"
+                          : "bg-yellow-50 border-yellow-200"
+                        : request.status === "approved"
+                          ? darkMode
+                            ? "bg-green-900/20 border-green-700"
+                            : "bg-green-50 border-green-200"
+                          : darkMode
+                            ? "bg-red-900/20 border-red-700"
+                            : "bg-red-50 border-red-200"
+                        }`}
+                    >
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-2xl">💬</span>
+                            <div>
+                              <p className={`font-semibold text-sm md:text-base transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                                }`}>
+                                {request.userPhone || user?.phone || "Unknown User"}
+                              </p>
+                              <p className={`text-xs transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                                }`}>
+                                Agent: {user?.agentCode || "N/A"}
+                              </p>
+                            </div>
+                          </div>
+                          <p className={`text-xs md:text-sm mb-2 transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                            }`}>
+                            {request.message || "Requesting WhatsApp Business feature"}
+                          </p>
+                          <p className={`text-xs transition-colors duration-300 ${darkMode ? "text-gray-500" : "text-gray-400"
+                            }`}>
+                            Requested: {request.requestedAt
+                              ? new Date(request.requestedAt.seconds * 1000).toLocaleString()
+                              : "N/A"}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {request.status === "pending" ? (
+                            <>
+                              <button
+                                onClick={() => handleApproveRequest(request.id, request.userId)}
+                                className="bg-green-500 hover:bg-green-600 text-white px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-semibold transition-all shadow-sm hover:shadow-md"
+                              >
+                                ✓ Approve
+                              </button>
+                              <button
+                                onClick={() => handleRejectRequest(request.id)}
+                                className="bg-red-500 hover:bg-red-600 text-white px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-semibold transition-all shadow-sm hover:shadow-md"
+                              >
+                                ✗ Reject
+                              </button>
+                            </>
+                          ) : (
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-semibold ${request.status === "approved"
+                                ? "bg-green-100 text-green-800 border border-green-200"
+                                : "bg-red-100 text-red-800 border border-red-200"
+                                }`}
+                            >
+                              {request.status === "approved" ? "✓ Approved" : "✗ Rejected"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Filter + Search Section */}
+        <div className={`rounded-xl shadow-md p-4 md:p-6 mb-6 border transition-all duration-300 ${darkMode
+          ? "bg-gray-800 border-gray-700"
+          : "bg-white border-gray-100"
+          }`}>
+          <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
+            {/* Filter Tabs */}
+            <div className={`flex p-1 rounded-xl w-full md:w-auto transition-colors duration-300 ${darkMode ? "bg-gray-700" : "bg-gray-100"
+              }`}>
+              {["pending", "approved", "rejected"].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => {
+                    setFilter(tab);
+                    setSearch("");
+                  }}
+                  className={`flex-1 md:flex-none px-3 md:px-5 py-2 md:py-2.5 rounded-lg text-xs md:text-sm font-semibold transition-all duration-200 ease-in-out ${filter === tab
+                    ? "bg-blue-600 text-white shadow-md"
+                    : darkMode
+                      ? "text-gray-300 hover:bg-gray-600 hover:text-white"
+                      : "text-gray-600 hover:bg-white hover:text-gray-800"
+                    }`}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {/* Search + Sort Container */}
+            <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+              {/* Search Input */}
+              <div className="relative w-full md:w-auto md:min-w-[280px] lg:min-w-[320px]">
+                <span className={`absolute left-3 top-1/2 transform -translate-y-1/2 transition-colors duration-300 ${darkMode ? "text-gray-500" : "text-gray-400"
+                  }`}>
+                  🔍
+                </span>
+                <input
+                  type="text"
+                  placeholder={`Search by phone or agent code...`}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={`w-full border pl-10 pr-4 py-2 md:py-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all duration-200 ${darkMode
+                    ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400 focus:border-blue-500"
+                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                    }`}
+                />
+              </div>
+
+              {/* Date Sort Dropdown */}
+              <select
+                value={dateSort}
+                onChange={(e) => setDateSort(e.target.value)}
+                className={`w-full md:w-auto border px-3 py-2 md:py-2.5 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all duration-200 cursor-pointer ${darkMode
+                  ? "bg-gray-700 border-gray-600 text-white focus:border-blue-500"
+                  : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                  }`}
+              >
+                <option value="desc">Newest First</option>
+                <option value="asc">Oldest First</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Users Table */}
+        <div className={`rounded-xl shadow-md border overflow-hidden transition-all duration-300 ${darkMode
+          ? "bg-gray-800 border-gray-700"
+          : "bg-white border-gray-100"
+          }`}>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className={`transition-colors duration-300 ${darkMode
+                ? "bg-gradient-to-r from-gray-700 to-gray-800"
+                : "bg-gradient-to-r from-gray-50 to-gray-100"
+                }`}>
+                <tr>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-left text-xs font-bold uppercase tracking-wider transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Phone
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-left text-xs font-bold uppercase tracking-wider transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Agent
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-left text-xs font-bold uppercase tracking-wider hidden sm:table-cell transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Device
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-left text-xs font-bold uppercase tracking-wider hidden lg:table-cell transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Date
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-center text-xs font-bold uppercase tracking-wider transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Status
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-center text-xs font-bold uppercase tracking-wider hidden md:table-cell transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    BWA
+                  </th>
+                  <th className={`px-3 md:px-6 py-3 md:py-4 text-center text-xs font-bold uppercase tracking-wider transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                    }`}>
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y transition-colors duration-300 ${darkMode
+                ? "bg-gray-800 divide-gray-700"
+                : "bg-white divide-gray-100"
+                }`}>
+                {sortedUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="text-center py-12">
+                      <div className="flex flex-col items-center justify-center">
+                        <span className="text-5xl mb-3">📭</span>
+                        <p className={`text-base font-medium transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                          }`}>
+                          No users found in the {filter} list
+                        </p>
+                        <p className={`text-sm mt-1 transition-colors duration-300 ${darkMode ? "text-gray-500" : "text-gray-400"
+                          }`}>
+                          {search ? "Try adjusting your search" : "Users will appear here when available"}
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  sortedUsers.map((user) => (
+                    <tr key={user.id} className={`transition-colors duration-150 ${darkMode
+                      ? "hover:bg-blue-900/20"
+                      : "hover:bg-blue-50/30"
+                      }`}>
+                      <td className="px-3 md:px-6 py-3 md:py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="text-lg md:text-xl mr-1 md:mr-2">📱</span>
+                          <span className={`text-xs md:text-sm font-semibold transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                            }`}>{user.phone || "N/A"}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 md:px-6 py-3 md:py-4 whitespace-nowrap">
+                        <span className={`text-xs md:text-sm font-medium transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-700"
+                          }`}>{user.agentCode || "N/A"}</span>
+                      </td>
+                      <td className={`px-3 md:px-6 py-3 md:py-4 whitespace-nowrap text-xs md:text-sm hidden sm:table-cell transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}>
+                        <span className="font-mono text-xs">{user.deviceId || "N/A"}</span>
+                      </td>
+                      <td className={`px-3 md:px-6 py-3 md:py-4 whitespace-nowrap text-xs md:text-sm hidden lg:table-cell transition-colors duration-300 ${darkMode ? "text-gray-400" : "text-gray-500"
+                        }`}>
+                        {user.createdAt
+                          ? new Date(user.createdAt.seconds * 1000).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })
+                          : "N/A"}
+                      </td>
+                      <td className="px-3 md:px-6 py-3 md:py-4 whitespace-nowrap text-center">
+                        <span
+                          className={`inline-flex items-center px-2 md:px-3 py-1 rounded-full text-xs font-semibold ${user.isApproved && !user.isDeactivated
+                            ? "bg-green-100 text-green-800 border border-green-200"
+                            : user.isDeactivated
+                              ? "bg-red-100 text-red-800 border border-red-200"
+                              : "bg-yellow-100 text-yellow-800 border border-yellow-200"
+                            }`}
+                        >
+                          <span className="hidden md:inline">
+                            {user.isApproved && !user.isDeactivated
+                              ? "✓ Approved"
+                              : user.isDeactivated
+                                ? "✗ Deactivated"
+                                : "⏳ Pending"}
+                          </span>
+                          <span className="md:hidden">
+                            {user.isApproved && !user.isDeactivated
+                              ? "✓"
+                              : user.isDeactivated
+                                ? "✗"
+                                : "⏳"}
+                          </span>
+                        </span>
+                      </td>
+
+                      {/* WhatsApp Toggle Column */}
+                      <td className="px-3 md:px-6 py-3 md:py-4 whitespace-nowrap text-center hidden md:table-cell">
+                        <button
+                          onClick={() => handleToggleWhatsApp(user.id, user.whatsappEnabled)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 ${user.whatsappEnabled
+                            ? "bg-green-500"
+                            : darkMode
+                              ? "bg-gray-600"
+                              : "bg-gray-300"
+                            }`}
+                          title={user.whatsappEnabled ? "WhatsApp Enabled" : "WhatsApp Disabled"}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${user.whatsappEnabled ? "translate-x-6" : "translate-x-1"
+                              }`}
+                          />
+                        </button>
+                        <div className={`text-xs mt-1 font-medium ${user.whatsappEnabled
+                          ? "text-green-600"
+                          : darkMode ? "text-gray-400" : "text-gray-500"
+                          }`}>
+                          {user.whatsappEnabled ? "ON" : "OFF"}
+                        </div>
+                      </td>
+
+                      <td className="px-4 md:px-6 py-4 whitespace-nowrap text-center">
+                        <div className="flex justify-center gap-1 md:gap-2 flex-wrap">
+                          {/* Pending users: Approve/Reject */}
+                          {!user.isApproved && !user.isDeactivated && (
+                            <>
+                              <button
+                                onClick={() => handleApprove(user.id)}
+                                className="text-white bg-green-500 hover:bg-green-600 font-semibold px-2 md:px-4 py-1 md:py-1.5 rounded-lg text-xs transition-all shadow-sm hover:shadow-md"
+                              >
+                                <span className="hidden sm:inline">✓ Approve</span>
+                                <span className="sm:hidden">✓</span>
+                              </button>
+                              <button
+                                onClick={() => handleReject(user.id)}
+                                className="text-white bg-red-500 hover:bg-red-600 font-semibold px-2 md:px-4 py-1 md:py-1.5 rounded-lg text-xs transition-all shadow-sm hover:shadow-md"
+                              >
+                                <span className="hidden sm:inline">✗ Reject</span>
+                                <span className="sm:hidden">✗</span>
+                              </button>
+                            </>
+                          )}
+
+                          {/* Active users: Deactivate */}
+                          {user.isActive && !user.isDeactivated && (
+                            <button
+                              onClick={() => handleDeactivate(user.id)}
+                              className="text-white bg-orange-500 hover:bg-orange-600 font-semibold px-2 md:px-4 py-1 md:py-1.5 rounded-lg text-xs transition-all shadow-sm hover:shadow-md"
+                            >
+                              <span className="hidden sm:inline">⏸ Deactivate</span>
+                              <span className="sm:hidden">⏸</span>
+                            </button>
+                          )}
+
+                          {/* Deactivated users: Activate */}
+                          {user.isDeactivated && (
+                            <button
+                              onClick={() => handleActivate(user.id)}
+                              className="text-white bg-blue-500 hover:bg-blue-600 font-semibold px-2 md:px-4 py-1 md:py-1.5 rounded-lg text-xs transition-all shadow-sm hover:shadow-md"
+                            >
+                              <span className="hidden sm:inline">▶ Activate</span>
+                              <span className="sm:hidden">▶</span>
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Table Footer with Count */}
+          {sortedUsers.length > 0 && (
+            <div className={`px-4 md:px-6 py-3 border-t transition-colors duration-300 ${darkMode
+              ? "bg-gray-700 border-gray-600"
+              : "bg-gray-50 border-gray-200"
+              }`}>
+              <p className={`text-xs md:text-sm transition-colors duration-300 ${darkMode ? "text-gray-300" : "text-gray-600"
+                }`}>
+                Showing <span className={`font-semibold transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                  }`}>{sortedUsers.length}</span> of{" "}
+                <span className={`font-semibold transition-colors duration-300 ${darkMode ? "text-white" : "text-gray-900"
+                  }`}>{filteredUsers.length}</span> {filter} users
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AdminPanel;
