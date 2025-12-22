@@ -1,9 +1,8 @@
 import React, { useState } from "react";
 
 const Login = ({ onLogin }) => {
-  // Auto-fill with test credentials
-  const [username, setUsername] = useState("ua-admin");
-  const [password, setPassword] = useState("pranav-pandey");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   // Fixed credentials
@@ -16,8 +15,8 @@ const Login = ({ onLogin }) => {
 
     // Basic client-side validation check for empty fields
     if (!username || !password) {
-        setError("Please enter both username and password.");
-        return;
+      setError("Please enter both username and password.");
+      return;
     }
 
     if (username === FIXED_USERNAME && password === FIXED_PASSWORD) {
@@ -36,19 +35,11 @@ const Login = ({ onLogin }) => {
         className="bg-white p-10 rounded-xl shadow-2xl w-full max-w-sm border border-gray-100 transition-all duration-300 hover:shadow-3xl"
       >
         <div className="text-center mb-8">
-            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-                Secure Login
-            </h2>
-            <p className="text-sm text-gray-500 mt-1">Admin Access Required</p>
-            
-            {/* Test Credentials Display */}
-            <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
-              <p className="text-xs font-semibold text-blue-800 mb-2">🔑 Test Credentials:</p>
-              <div className="text-xs text-blue-700 space-y-1">
-                <p><span className="font-medium">Username:</span> ua-admin</p>
-                <p><span className="font-medium">Password:</span> pranav-pandey</p>
-              </div>
-            </div>
+          <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
+            Secure Login
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">Admin Access Required</p>
+
         </div>
 
         {/* Professional Error Message Box */}
@@ -99,12 +90,12 @@ const Login = ({ onLogin }) => {
         >
           Sign In
         </button>
-        
+
         {/* Professional Branding Footer */}
         <div className="text-center mt-6 pt-4 border-t border-gray-100">
-            <p className="text-xs text-gray-400">
-                Powered by <strong className="text-red-500 font-semibold">Universe Adds</strong> | Built by <strong className="text-purple-600 font-semibold">InitCodes</strong>
-            </p>
+          <p className="text-xs text-gray-400">
+            Powered by <strong className="text-red-500 font-semibold">Universe Adds</strong> | Built by <strong className="text-purple-600 font-semibold">InitCodes</strong>
+          </p>
         </div>
       </form>
     </div>
