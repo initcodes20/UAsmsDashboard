@@ -1,19 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { collection, onSnapshot, doc, setDoc, updateDoc, orderBy, query } from "firebase/firestore";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../firebase";
+import { db } from "../firebase";
 
 const UpdateManager = ({ darkMode }) => {
     const [versions, setVersions] = useState([]);
     const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
 
-    // Form state
-    const [selectedFile, setSelectedFile] = useState(null);
+    // Form state - Changed from file upload to URL input
+    const [downloadUrl, setDownloadUrl] = useState("");
     const [versionName, setVersionName] = useState("");
     const [versionCode, setVersionCode] = useState("");
     const [changelog, setChangelog] = useState("");
-    const [isCritical, setIsCritical] = useState(false);
+    const [fileSize, setFileSize] = useState(""); // In MB
+    const [isCritical, setIsCritical] = useState(true); // Default to forced update
 
     // Validation errors
     const [errors, setErrors] = useState({});
@@ -31,35 +30,24 @@ const UpdateManager = ({ darkMode }) => {
         return () => unsubscribe();
     }, []);
 
-    // File selection handler
-    const handleFileSelect = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            // Validate file type
-            if (!file.name.endsWith(".apk")) {
-                setErrors({ ...errors, file: "Please select a valid APK file" });
-                return;
-            }
-
-            // Validate file size (max 100MB)
-            if (file.size > 100 * 1024 * 1024) {
-                setErrors({ ...errors, file: "File size must be less than 100MB" });
-                return;
-            }
-
-            setSelectedFile(file);
-            setErrors({ ...errors, file: null });
-        }
-    };
-
     // Validate form
     const validateForm = () => {
         const newErrors = {};
 
-        if (!selectedFile) newErrors.file = "Please select an APK file";
+        if (!downloadUrl.trim()) {
+            newErrors.downloadUrl = "Download URL is required";
+        } else {
+            try {
+                new URL(downloadUrl);
+            } catch {
+                newErrors.downloadUrl = "Invalid URL format";
+            }
+        }
+
         if (!versionName.trim()) newErrors.versionName = "Version name is required";
         if (!versionCode || versionCode <= 0) newErrors.versionCode = "Valid version code is required";
         if (!changelog.trim()) newErrors.changelog = "Changelog is required";
+        if (!fileSize || fileSize <= 0) newErrors.fileSize = "File size is required";
 
         // Check if version code already exists
         if (versions.some(v => v.versionCode === parseInt(versionCode))) {
@@ -70,68 +58,43 @@ const UpdateManager = ({ darkMode }) => {
         return Object.keys(newErrors).length === 0;
     };
 
-    // Upload APK
-    const handleUpload = async () => {
+    // Save version to Firestore
+    const handleSubmit = async () => {
         if (!validateForm()) return;
 
         setUploading(true);
-        setUploadProgress(0);
 
         try {
-            // Create storage reference
-            const storageRef = ref(storage, `apk_updates/app-release-v${versionName}.apk`);
+            // Convert MB to bytes for consistency
+            const fileSizeInBytes = parseFloat(fileSize) * 1024 * 1024;
 
-            // Upload file
-            const uploadTask = uploadBytesResumable(storageRef, selectedFile);
+            // Save to Firestore
+            const versionDoc = doc(db, "app_versions", `version_${versionCode}`);
+            await setDoc(versionDoc, {
+                versionName: versionName.trim(),
+                versionCode: parseInt(versionCode),
+                downloadUrl: downloadUrl.trim(),
+                changelog: changelog.trim(),
+                fileSize: fileSizeInBytes,
+                uploadedAt: new Date(),
+                uploadedBy: "admin",
+                isCritical: isCritical,
+                isActive: true,
+                downloadCount: 0,
+            });
 
-            uploadTask.on(
-                "state_changed",
-                (snapshot) => {
-                    // Progress tracking
-                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                    setUploadProgress(progress);
-                },
-                (error) => {
-                    console.error("Upload error:", error);
-                    alert("❌ Upload failed: " + error.message);
-                    setUploading(false);
-                },
-                async () => {
-                    // Upload complete - get download URL
-                    const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            // Reset form
+            setDownloadUrl("");
+            setVersionName("");
+            setVersionCode("");
+            setChangelog("");
+            setFileSize("");
+            setIsCritical(true);
+            setUploading(false);
 
-                    // Save to Firestore
-                    const versionDoc = doc(db, "app_versions", `version_${versionCode}`);
-                    await setDoc(versionDoc, {
-                        versionName: versionName.trim(),
-                        versionCode: parseInt(versionCode),
-                        downloadUrl: downloadUrl,
-                        changelog: changelog.trim(),
-                        fileSize: selectedFile.size,
-                        uploadedAt: new Date(),
-                        uploadedBy: "admin",
-                        isCritical: isCritical,
-                        isActive: true,
-                        downloadCount: 0,
-                    });
-
-                    // Reset form
-                    setSelectedFile(null);
-                    setVersionName("");
-                    setVersionCode("");
-                    setChangelog("");
-                    setIsCritical(false);
-                    setUploadProgress(0);
-                    setUploading(false);
-
-                    alert("✅ APK uploaded successfully!");
-
-                    // Reset file input
-                    document.getElementById("apk-file-input").value = "";
-                }
-            );
+            alert("✅ Version added successfully!");
         } catch (error) {
-            console.error("Error uploading APK:", error);
+            console.error("Error saving version:", error);
             alert("❌ Error: " + error.message);
             setUploading(false);
         }
@@ -167,43 +130,41 @@ const UpdateManager = ({ darkMode }) => {
                 <h2 className={`text-xl font-bold mb-4 flex items-center gap-2 ${darkMode ? "text-white" : "text-gray-900"
                     }`}>
                     <span className="text-2xl">📱</span>
-                    Upload New APK Version
+                    Add New APK Version
                 </h2>
 
                 <div className="space-y-4">
-                    {/* File Input */}
+                    {/* Download URL */}
                     <div>
                         <label className={`block text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"
                             }`}>
-                            APK File (max 100MB)
+                            APK Download URL (Google Drive, GitHub, etc.)
                         </label>
                         <input
-                            id="apk-file-input"
-                            type="file"
-                            accept=".apk"
-                            onChange={handleFileSelect}
+                            type="url"
+                            value={downloadUrl}
+                            onChange={(e) => setDownloadUrl(e.target.value)}
                             disabled={uploading}
+                            placeholder="https://drive.google.com/file/d/xxx/view?usp=sharing"
                             className={`w-full px-4 py-2 rounded-lg border text-sm ${darkMode
-                                    ? "bg-gray-700 border-gray-600 text-white"
-                                    : "bg-white border-gray-300 text-gray-900"
-                                } ${errors.file ? "border-red-500" : ""}`}
+                                ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                                : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                                } ${errors.downloadUrl ? "border-red-500" : ""}`}
                         />
-                        {errors.file && (
-                            <p className="text-red-500 text-xs mt-1">{errors.file}</p>
+                        {errors.downloadUrl && (
+                            <p className="text-red-500 text-xs mt-1">{errors.downloadUrl}</p>
                         )}
-                        {selectedFile && !errors.file && (
-                            <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                                Selected: {selectedFile.name} ({formatFileSize(selectedFile.size)})
-                            </p>
-                        )}
+                        <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                            💡 Upload APK to Google Drive/GitHub, get shareable link, paste here
+                        </p>
                     </div>
 
-                    {/* Version Name */}
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Version Name & Code & File Size */}
+                    <div className="grid grid-cols-3 gap-4">
                         <div>
                             <label className={`block text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"
                                 }`}>
-                                Version Name (e.g., 1.10)
+                                Version Name
                             </label>
                             <input
                                 type="text"
@@ -212,8 +173,8 @@ const UpdateManager = ({ darkMode }) => {
                                 disabled={uploading}
                                 placeholder="1.10"
                                 className={`w-full px-4 py-2 rounded-lg border text-sm ${darkMode
-                                        ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
-                                        : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                                    ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
                                     } ${errors.versionName ? "border-red-500" : ""}`}
                             />
                             {errors.versionName && (
@@ -221,11 +182,10 @@ const UpdateManager = ({ darkMode }) => {
                             )}
                         </div>
 
-                        {/* Version Code */}
                         <div>
                             <label className={`block text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"
                                 }`}>
-                                Version Code (integer)
+                                Version Code
                             </label>
                             <input
                                 type="number"
@@ -234,12 +194,34 @@ const UpdateManager = ({ darkMode }) => {
                                 disabled={uploading}
                                 placeholder="18"
                                 className={`w-full px-4 py-2 rounded-lg border text-sm ${darkMode
-                                        ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
-                                        : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                                    ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
                                     } ${errors.versionCode ? "border-red-500" : ""}`}
                             />
                             {errors.versionCode && (
                                 <p className="text-red-500 text-xs mt-1">{errors.versionCode}</p>
+                            )}
+                        </div>
+
+                        <div>
+                            <label className={`block text-sm font-semibold mb-2 ${darkMode ? "text-gray-300" : "text-gray-700"
+                                }`}>
+                                File Size (MB)
+                            </label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={fileSize}
+                                onChange={(e) => setFileSize(e.target.value)}
+                                disabled={uploading}
+                                placeholder="25.5"
+                                className={`w-full px-4 py-2 rounded-lg border text-sm ${darkMode
+                                    ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                                    } ${errors.fileSize ? "border-red-500" : ""}`}
+                            />
+                            {errors.fileSize && (
+                                <p className="text-red-500 text-xs mt-1">{errors.fileSize}</p>
                             )}
                         </div>
                     </div>
@@ -257,8 +239,8 @@ const UpdateManager = ({ darkMode }) => {
                             rows="4"
                             placeholder="- Bug fixes&#10;- Performance improvements&#10;- New features"
                             className={`w-full px-4 py-2 rounded-lg border text-sm ${darkMode
-                                    ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
-                                    : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                                ? "bg-gray-700 border-gray-600 text-white placeholder-gray-400"
+                                : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
                                 } ${errors.changelog ? "border-red-500" : ""}`}
                         />
                         {errors.changelog && (
@@ -281,40 +263,20 @@ const UpdateManager = ({ darkMode }) => {
                             className={`text-sm font-medium cursor-pointer ${darkMode ? "text-gray-300" : "text-gray-700"
                                 }`}
                         >
-                            🚨 Critical Update (Force users to update)
+                            🚨 Force Update (Users must install or exit app)
                         </label>
                     </div>
 
-                    {/* Upload Progress */}
-                    {uploading && (
-                        <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                                <span className={darkMode ? "text-gray-300" : "text-gray-700"}>
-                                    Uploading...
-                                </span>
-                                <span className={darkMode ? "text-gray-300" : "text-gray-700"}>
-                                    {uploadProgress.toFixed(0)}%
-                                </span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div
-                                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                    style={{ width: `${uploadProgress}%` }}
-                                />
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Upload Button */}
+                    {/* Submit Button */}
                     <button
-                        onClick={handleUpload}
+                        onClick={handleSubmit}
                         disabled={uploading}
                         className={`w-full py-3 rounded-lg font-semibold text-sm transition-all shadow-md hover:shadow-lg ${uploading
-                                ? "bg-gray-400 cursor-not-allowed text-gray-700"
-                                : "bg-blue-600 hover:bg-blue-700 text-white"
+                            ? "bg-gray-400 cursor-not-allowed text-gray-700"
+                            : "bg-blue-600 hover:bg-blue-700 text-white"
                             }`}
                     >
-                        {uploading ? "⏳ Uploading..." : "📤 Upload APK"}
+                        {uploading ? "⏳ Saving..." : "✅ Add Version"}
                     </button>
                 </div>
             </div>
@@ -403,7 +365,7 @@ const UpdateManager = ({ darkMode }) => {
                                 </th>
                                 <th className={`px-6 py-3 text-left text-xs font-bold uppercase tracking-wider ${darkMode ? "text-gray-300" : "text-gray-700"
                                     }`}>
-                                    Uploaded
+                                    Added
                                 </th>
                                 <th className={`px-6 py-3 text-center text-xs font-bold uppercase tracking-wider ${darkMode ? "text-gray-300" : "text-gray-700"
                                     }`}>
@@ -411,7 +373,7 @@ const UpdateManager = ({ darkMode }) => {
                                 </th>
                                 <th className={`px-6 py-3 text-center text-xs font-bold uppercase tracking-wider ${darkMode ? "text-gray-300" : "text-gray-700"
                                     }`}>
-                                    Actions
+                                    Download
                                 </th>
                             </tr>
                         </thead>
@@ -423,7 +385,7 @@ const UpdateManager = ({ darkMode }) => {
                                         <span className="text-5xl mb-3 block">📭</span>
                                         <p className={`text-base font-medium ${darkMode ? "text-gray-400" : "text-gray-500"
                                             }`}>
-                                            No versions uploaded yet
+                                            No versions added yet
                                         </p>
                                     </td>
                                 </tr>
@@ -443,7 +405,7 @@ const UpdateManager = ({ darkMode }) => {
                                                 </p>
                                                 {version.isCritical && (
                                                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 mt-1">
-                                                        🚨 Critical
+                                                        🚨 Forced
                                                     </span>
                                                 )}
                                             </div>
@@ -480,7 +442,7 @@ const UpdateManager = ({ darkMode }) => {
                                                 rel="noopener noreferrer"
                                                 className="text-blue-600 hover:text-blue-700 text-sm font-semibold"
                                             >
-                                                📥 Download
+                                                📥 Link
                                             </a>
                                         </td>
                                     </tr>
