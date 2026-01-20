@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 // Firebase config using Vite env variables
 const firebaseConfig = {
@@ -22,3 +23,6 @@ export const db = getFirestore(app);
 
 // Auth (optional)
 export const auth = getAuth(app);
+
+// Storage for APK uploads
+export const storage = getStorage(app);
